@@ -1,5 +1,5 @@
 import sqlalchemy as sq
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
@@ -8,6 +8,7 @@ class Users(Base):
 
     id = sq.Column(sq.Integer, primary_key=True)
     telegram_id = sq.Column(sq.String(length=50), unique=True, nullable=False)
+    user_step = sq.Column(sq.Integer, default=0)
 
 class Words(Base):
     __tablename__ = 'words'

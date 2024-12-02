@@ -6,14 +6,12 @@ from telebot.storage import StateMemoryStorage
 from telebot.handler_backends import State, StatesGroup
 from sqlalchemy.orm import sessionmaker
 from data.models import Users, User_translation, Words, Translations
-from data.models import create_tables
 from dotenv import load_dotenv
 import os
 
+
 DSN = "postgresql://postgres:Mb20041995@localhost:5432/Tg_Bot_translation"
 engine = sqlalchemy.create_engine(DSN)
-create_tables(engine)  # Создаём таблицы 
-
 Session = sessionmaker(bind=engine)
 session = Session()
 
@@ -44,59 +42,6 @@ def echo_all(message):  # Добавление id пользователя в б
         session.close()
     bot.send_message(message.chat.id, f"Введи команду /Go чтоб начать")
 
-# Создаём слова
-words = [
-    Words(word='Привет'),
-    Words(word='Кошка'),
-    Words(word='Собака'),
-    Words(word='Красный'),
-    Words(word='Машина')
-]
-
-# Добавляем слова в сессию
-session.add_all(words)
-session.commit()  # Сохраняем слова, чтобы получить их ID
-
-# Получаем последние добавленные слова
-word_1_id = words[0].id
-word_2_id = words[1].id
-word_3_id = words[2].id
-word_4_id = words[3].id
-word_5_id = words[4].id
-
-# Создаём переводы word_id
-translations = [
-    Translations(word_id=word_1_id, translation='hello', is_primary=True),
-    Translations(word_id=word_1_id, translation='world', is_primary=False),
-    Translations(word_id=word_1_id, translation='peace', is_primary=False),
-    Translations(word_id=word_1_id, translation='cat', is_primary=False),
-    Translations(word_id=word_2_id, translation='cat', is_primary=True),
-    Translations(word_id=word_2_id, translation='machine', is_primary=False),
-    Translations(word_id=word_2_id, translation='vehicle', is_primary=False),
-    Translations(word_id=word_2_id, translation='dog', is_primary=False),
-    Translations(word_id=word_3_id, translation='dog', is_primary=True),
-    Translations(word_id=word_3_id, translation='mouse', is_primary=False),
-    Translations(word_id=word_3_id, translation='snake', is_primary=False),
-    Translations(word_id=word_3_id, translation='cat', is_primary=False),
-    Translations(word_id=word_4_id, translation='red', is_primary=True),
-    Translations(word_id=word_4_id, translation='yellow', is_primary=False),
-    Translations(word_id=word_4_id, translation='blue', is_primary=False),
-    Translations(word_id=word_4_id, translation='green', is_primary=False),
-    Translations(word_id=word_5_id, translation='car', is_primary=True),
-    Translations(word_id=word_5_id, translation='machine', is_primary=False),
-    Translations(word_id=word_5_id, translation='vehicle', is_primary=False),
-    Translations(word_id=word_5_id, translation='dog', is_primary=False),
-]
-
-# Добавляем переводы в сессию
-session.add_all(translations)
-session.commit()  # Сохраняем все переводы
-
-# Закрываем сессию
-session.close()
-
-known_users = []
-userStep = {}
 buttons = []
 
 # Функция для получения случайного слова и его переводов
@@ -135,29 +80,24 @@ def show_hint(*lines):
 def show_target(data):
     return f"{data['target_word']} -> {data['translate_word']}"
 
-def get_user_step(uid):
-    if uid in userStep:
-        return userStep[uid]
-    else:
-        known_users.append(uid)
-        userStep[uid] = 0
-        print("New user detected, who hasn't used \"/start\" yet")
-        return 0
-
 @bot.message_handler(commands=['Go'])
 def create_cards(message):
     cid = message.chat.id
-    if cid not in known_users:
-        known_users.append(cid)
-        userStep[cid] = 0
+    user_id = message.from_user.id
+
+    # Проверяем, существует ли пользователь в базе данных
+    user = session.query(Users).filter_by(telegram_id=str(user_id)).first()
+    if user:
         bot.send_message(cid, "Привет. Давай начнём учить английский")
-    markup = types.ReplyKeyboardMarkup(row_width=2)
+    else:
+        bot.send_message(cid, "Ошибка: вы не зарегистрированы. Пожалуйста, используйте /start для регистрации.")
+        return
 
     global buttons
     target_word, correct_translation, incorrect_translations = get_random_word_and_translations()
     all_options = [correct_translation] + incorrect_translations
     random.shuffle(all_options)
-
+    markup = types.ReplyKeyboardMarkup(row_width=2)
     buttons = [types.KeyboardButton(option) for option in all_options]
 
     next_btn = types.KeyboardButton(Command.NEXT)
@@ -174,6 +114,12 @@ def create_cards(message):
         data['target_word'] = correct_translation
         data['translate_word'] = target_word
         data['other_words'] = incorrect_translations
+def get_user_step(uid):
+    user = session.query(Users).filter_by(telegram_id=str(uid)).first()
+    if user:
+        return user.user_step
+    else:
+        return 0  # Если пользователь не найден, возвращаем 0
 
 @bot.message_handler(func=lambda message: message.text == Command.NEXT)
 def next_cards(message):
@@ -246,15 +192,15 @@ def entering_translations(message):
 def message_reply(message):
     text = message.text
     markup = types.ReplyKeyboardMarkup(row_width=2)
+
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         target_word = data['target_word']
+
         if text == target_word:
             hint = show_target(data)
             hint_text = ["Отлично!❤", hint]
             next_btn = types.KeyboardButton(Command.NEXT)
-            add_word_btn = types.KeyboardButton(Command.ADD_WORD)
-            delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
-            buttons.extend([next_btn, add_word_btn, delete_word_btn])
+            buttons.extend([next_btn])
             hint = show_hint(*hint_text)
         else:
             for btn in buttons:
@@ -263,7 +209,13 @@ def message_reply(message):
                     break
             hint = show_hint("Допущена ошибка!",
                              f"Попробуй ещё раз вспомнить слово 🇷🇺{data['translate_word']}")
+
     markup.add(*buttons)
     bot.send_message(message.chat.id, hint, reply_markup=markup)
+    # Обновляем шаг пользователя в базе данных
+    user = session.query(Users).filter_by(telegram_id=str(message.from_user.id)).first()
+    if user:
+        user.user_step += 1
+        session.commit()
 bot.add_custom_filter(custom_filters.StateFilter(bot))
 bot.infinity_polling(skip_pending=True)
